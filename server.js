@@ -1,35 +1,44 @@
-// LANIT 聊天服务器：中转站
+// LANIT 聊天服务器：中转站（支持在线人数查询 + 文件字节透传）
 const net = require('net');
 
-// 所有在线客户端的 socket（连接管道）
 const clients = new Set();
+
+function broadcast(msg, except) {
+  for (const c of clients) {
+    if (c !== except) c.write(msg);
+  }
+}
 
 const server = net.createServer((socket) => {
   const id = socket.remoteAddress + ':' + socket.remotePort;
-  console.log(`[+] 用户上线: ${id}，当前在线 ${clients.size + 1} 人`);
   clients.add(socket);
+  console.log(`[+] 用户上线: ${id}，当前在线 ${clients.size} 人`);
 
-  // 收到数据 → 原样广播给其他所有人
+  // 新人自己也要知道在线人数 + 通知其他人
+  socket.write(`[系统] 欢迎加入！当前在线 ${clients.size} 人\n`);
+  broadcast(`[系统] 有人上线了，当前在线 ${clients.size} 人\n`, socket);
+
   socket.on('data', (data) => {
-    for (const c of clients) {
-      if (c !== socket) c.write(data);   // 转发，不发回给自己
+    // 在线人数查询命令（客户端发 [[ONLINE]]）
+    if (data.toString().startsWith('[[ONLINE]]')) {
+      socket.write(`[系统] 当前在线 ${clients.size} 人\n`);
+      return;
     }
+    // 其他数据（含文件二进制）原样转发
+    broadcast(data, socket);
   });
 
-  // 关键修复：统一在 'close' 里收尸
-  // 不管正常断开（end）还是被强杀（error），最终都会触发 close 一次
   socket.on('close', () => {
     clients.delete(socket);
     console.log(`[-] 用户下线: ${id}，当前在线 ${clients.size} 人`);
+    broadcast(`[系统] 有人下线了，当前在线 ${clients.size} 人\n`);
   });
 
-  // error 必须监听，否则未处理的 error 会直接崩掉整个服务器！
-  socket.on('error', () => {
-    // 什么都不用做，清理交给 close
-  });
+  // error 必须监听，否则一个用户的网络异常会崩掉整个服务器
+  socket.on('error', () => {});
 });
 
 server.listen(4000, () => {
   console.log('LANIT 聊天服务器已启动，端口 4000');
-  console.log('客户端连接方式: node client.js [昵称]');
+  console.log('客户端: node client.js [昵称] [服务器IP]');
 });
